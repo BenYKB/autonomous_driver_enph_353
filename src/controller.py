@@ -27,14 +27,16 @@ class controller():
         try:
             cv_image = self._bridge.imgmsg_to_cv2(image, "bgr8")
         except CvBridgeError as e:
-            print(e)
+            raise e
             return
         
         # TODO: process image to follow path
         row_max, col_max, channels = cv_image.shape
+        hsv_frame = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
+        grey_frame = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)[row_max//2:row_max, 0:col_max]
 
-        grey_frame = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)
-        mask = cv2.inRange(grey_frame, 230,255)
+        #mask = cv2.inRange(grey_frame, 240,255)
+        mask = cv2.inRange(hsv_frame, (0,0,80), (10,10,90))
         M = cv2.moments(mask)
 
         out_frame = grey_frame
@@ -43,15 +45,19 @@ class controller():
         if M["m00"] != 0:
             cX = int(M["m10"] / M["m00"])
             cY = int(M["m01"] / M["m00"])
-            out_frame = cv2.circle(mask, (cX, cY), 20, (0,0,255), -1)
+            out_frame = cv2.circle(mask, (cX, cY), 40, (50,50,50), -1)
             error = cX - col_max / 2
 
+            # if -10 < error < 10:
+            #     error =-10
+
         move_cmd = Twist()
-        move_cmd.linear.x = 0.05
-        move_cmd.angular.z = error * 0.01
+        move_cmd.linear.x = 0.2 - error * 0.0001
+        move_cmd.angular.z = -1 * error * 0.02
 
         self._twist_pub.publish(move_cmd)
-        self._image_pub.publish(self._bridge.cv2_to_imgmsg(out_frame))
+        self._image_pub.publish(self._bridge.cv2_to_imgmsg(mask))
+
 
 if __name__ == "__main__":
     autonomous_driver = controller()
