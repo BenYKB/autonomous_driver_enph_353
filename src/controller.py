@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+from enum import Enum
 import cv2
 #import csv
 import numpy as np
@@ -12,7 +13,14 @@ import rospy
 from geometry_msgs.msg import Twist
 from cv_bridge import CvBridge, CvBridgeError
 
+
 # Code used for autonomous control of rover
+
+class States(Enum):
+    STARTING = 1
+    FOLLOWING = 2
+
+START_UP_WAIT_TIME = 30
 
 class controller():
     def __init__(self):
@@ -21,6 +29,8 @@ class controller():
         self._twist_pub = rospy.Publisher('/R1/cmd_vel', Twist, queue_size=1)
         self._image_pub = rospy.Publisher('R1/debug_image', Image, queue_size=1)
         self._bridge = CvBridge()
+        self.image_count = 0
+        self.state = States.STARTING
         
 
     def _image_callback(self, image):
@@ -28,54 +38,56 @@ class controller():
             cv_image = self._bridge.imgmsg_to_cv2(image, "bgr8")
         except CvBridgeError as e:
             raise e
-            return
         
-        # TODO: process image to follow path
-        row_max, col_max, channels = cv_image.shape
-        hsv_frame = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
+        if self.state == States.STARTING:
+            out_frame = cv_image
 
-        road_mask = cv2.inRange(hsv_frame, (0,0,80), (10,10,90))
-        line_mask = cv2.inRange(hsv_frame, (0,0,253), (2,2,255))
-        cross_walk_red_mask = cv2.inRange(hsv_frame, (0,250,250), (2,255,255))     
+            move_cmd = Twist()
+            move_cmd.linear.x = 0.2
+            move_cmd.angular.z = 0.3
+        else:
+            row_max, col_max, channels = cv_image.shape
+            hsv_frame = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
 
-        
-        line_col_start = 1*(col_max//3)
-        line_row_start = -1*(row_max//3)
-        cropped_line_mask = line_mask[line_row_start:, line_col_start:]
+            road_mask = cv2.inRange(hsv_frame, (0,0,80), (10,10,90))
+            line_mask = cv2.inRange(hsv_frame, (0,0,253), (2,2,255))
+            cross_walk_red_mask = cv2.inRange(hsv_frame, (0,250,250), (2,255,255))     
+            
+            line_col_start = 1*(col_max//3)
+            line_row_start = -1*(row_max//3)
+            cropped_line_mask = line_mask[line_row_start:, line_col_start:]
 
-        M_road = cv2.moments(road_mask)
-        M_line = cv2.moments(cropped_line_mask)
+            M_road = cv2.moments(road_mask)
+            M_line = cv2.moments(cropped_line_mask)
 
-        alpha_line = 0.3
+            alpha_line = 0.3
 
-        out_frame = road_mask
+            out_frame = road_mask
 
-        error = 0
-        if M_road["m00"] != 0:
-            cX = int(M_road["m10"] / M_road["m00"])
-            cY = int(M_road["m01"] / M_road["m00"])
-            out_frame = cv2.circle(road_mask, (cX, cY), 40, (0,100,0), -1)
-            error = cX - col_max / 2
+            error = 0
+            if M_road["m00"] != 0:
+                cX = int(M_road["m10"] / M_road["m00"])
+                cY = int(M_road["m01"] / M_road["m00"])
+                out_frame = cv2.circle(road_mask, (cX, cY), 40, (0,100,0), -1)
+                error = cX - col_max / 2
 
-            if M_line["m00"] != 0:
-                cX = int(M_line["m10"] / M_line["m00"])
-                cY = int(M_line["m01"] / M_line["m00"])
+                if M_line["m00"] != 0 and self.image_count > 10:
+                    cX = int(M_line["m10"] / M_line["m00"])
+                    cY = int(M_line["m01"] / M_line["m00"])
 
-                out_frame = cv2.circle(road_mask, (cX+ (col_max//3), (row_max//3) + cY), 40, (0,100,0), -1)
+                    out_frame = cv2.circle(road_mask, (cX+ (col_max//3), (row_max//3) + cY), 40, (0,100,0), -1)
 
-                error = (1 - alpha_line) * error + alpha_line * (cX - (3 * line_col_start) / 4)
+                    error = (1 - alpha_line) * error + alpha_line * (cX - (3 * line_col_start) / 4)
 
-
-
-            # if -10 < error < 10:
-            #     error =-10
-
-        move_cmd = Twist()
-        move_cmd.linear.x = 0.1 - error * 0.0001
-        move_cmd.angular.z = -1 * error * 0.01
+            move_cmd = Twist()
+            move_cmd.linear.x = 0.1 - error * 0.0001
+            move_cmd.angular.z = -1 * error * 0.01
 
         self._twist_pub.publish(move_cmd)
-        self._image_pub.publish(self._bridge.cv2_to_imgmsg(cropped_line_mask))
+        self._image_pub.publish(self._bridge.cv2_to_imgmsg(out_frame))
+        self.image_count += 1
+        if self.image_count == START_UP_WAIT_TIME:
+            self.state = States.FOLLOWING
 
 
 if __name__ == "__main__":
