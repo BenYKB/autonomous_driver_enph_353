@@ -77,7 +77,7 @@ class controller():
 
                     out_frame = cv2.circle(road_mask, (cX+ (col_max//3), (row_max//3) + cY), 40, (0,100,0), -1)
 
-                    error = (1 - alpha_line) * error + alpha_line * (cX - (3 * line_col_start) / 4)
+                    error = (1 - alpha_line) * error + alpha_line * (cX - (4 * line_col_start) / 5)
 
             move_cmd = Twist()
             move_cmd.linear.x = 0.1 - error * 0.0001
