@@ -33,30 +33,49 @@ class controller():
         # TODO: process image to follow path
         row_max, col_max, channels = cv_image.shape
         hsv_frame = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
-        grey_frame = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)[row_max//2:row_max, 0:col_max]
 
-        #mask = cv2.inRange(grey_frame, 240,255)
-        mask = cv2.inRange(hsv_frame, (0,0,80), (10,10,90))
-        M = cv2.moments(mask)
+        road_mask = cv2.inRange(hsv_frame, (0,0,80), (10,10,90))
+        line_mask = cv2.inRange(hsv_frame, (0,0,253), (2,2,255))
+        cross_walk_red_mask = cv2.inRange(hsv_frame, (0,250,250), (2,255,255))     
 
-        out_frame = grey_frame
+        
+        line_col_start = 1*(col_max//3)
+        line_row_start = -1*(row_max//3)
+        cropped_line_mask = line_mask[line_row_start:, line_col_start:]
+
+        M_road = cv2.moments(road_mask)
+        M_line = cv2.moments(cropped_line_mask)
+
+        alpha_line = 0.3
+
+        out_frame = road_mask
 
         error = 0
-        if M["m00"] != 0:
-            cX = int(M["m10"] / M["m00"])
-            cY = int(M["m01"] / M["m00"])
-            out_frame = cv2.circle(mask, (cX, cY), 40, (50,50,50), -1)
+        if M_road["m00"] != 0:
+            cX = int(M_road["m10"] / M_road["m00"])
+            cY = int(M_road["m01"] / M_road["m00"])
+            out_frame = cv2.circle(road_mask, (cX, cY), 40, (0,100,0), -1)
             error = cX - col_max / 2
+
+            if M_line["m00"] != 0:
+                cX = int(M_line["m10"] / M_line["m00"])
+                cY = int(M_line["m01"] / M_line["m00"])
+
+                out_frame = cv2.circle(road_mask, (cX+ (col_max//3), (row_max//3) + cY), 40, (0,100,0), -1)
+
+                error = (1 - alpha_line) * error + alpha_line * (cX - (3 * line_col_start) / 4)
+
+
 
             # if -10 < error < 10:
             #     error =-10
 
         move_cmd = Twist()
-        move_cmd.linear.x = 0.2 - error * 0.0001
-        move_cmd.angular.z = -1 * error * 0.02
+        move_cmd.linear.x = 0.1 - error * 0.0001
+        move_cmd.angular.z = -1 * error * 0.01
 
         self._twist_pub.publish(move_cmd)
-        self._image_pub.publish(self._bridge.cv2_to_imgmsg(mask))
+        self._image_pub.publish(self._bridge.cv2_to_imgmsg(cropped_line_mask))
 
 
 if __name__ == "__main__":
