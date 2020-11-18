@@ -23,7 +23,7 @@ class States(Enum):
     SPIN = 3
     STOP = 4
 
-START_UP_WAIT_TIME = 3
+START_UP_WAIT_TIME = 4
 
 class controller():
     def __init__(self):
@@ -39,10 +39,9 @@ class controller():
 
         self._bridge = CvBridge()
         self.image_count = 0
-        self.state = States.STARTING
+        self.state = States.STOP
         self.seconds = 0
         rospy.Timer(rospy.Duration(1), self._on_timer)
-
 
     def _on_timer(self, time):
         if not self.initialized:
@@ -52,6 +51,7 @@ class controller():
         
         if self.seconds == 1:
             self.start_timer()
+            self.state = States.STARTING
         
         if self.seconds == 60*4:
             self.stop_timer()
@@ -64,7 +64,7 @@ class controller():
             self.state = States.FOLLOWING
 
     def _time_callback(self, time):
-        if not self.initialized and rospy.get_time() > 0:
+        if not self.initialized and rospy.get_time() > 1:
             self.initialized = True
 
     def start_timer(self):
