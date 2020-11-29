@@ -24,8 +24,8 @@ class States(Enum):
     STOP = 4
     CROSSWALK_WATCH = 5
     CROSSING = 6
-
-
+    TO_INNER = 7
+    INNER_DRIVE = 8
 
 START_UP_WAIT_TIME = 4
 NUM_ROWS = 720
@@ -114,7 +114,7 @@ class controller():
             hsv_frame = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
 
             road_mask = cv2.inRange(hsv_frame, (0,0,80), (10,10,90))
-            line_mask = cv2.inRange(hsv_frame, (0,0,253), (2,2,255))
+            line_mask = cv2.inRange(hsv_frame, (0,0,248), (2,2,255))
             cross_walk_red_mask = cv2.inRange(hsv_frame, (0,250,250), (2,255,255))
             
             line_col_start = 1*(col_max//3)
