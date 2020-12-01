@@ -8,6 +8,7 @@ from sensor_msgs.msg import Image
 #import os
 #import pyqrcode
 #import random
+from std_msgs.msg import Time
 from std_msgs.msg import String
 from std_msgs.msg import Time
 import rospy
@@ -27,14 +28,21 @@ class States(Enum):
     TO_INNER = 7
     INNER_DRIVE = 8
 
-START_UP_WAIT_TIME = 4
+START_UP_WAIT_TIME = 8 # 8 #TODO: Change back after debugging!
 NUM_ROWS = 720
 NUM_COLUMNS = 1080
-CROSSING_TIME = 10
+CROSSING_TIME = 10 
+TO_INNER_TIMEOUT = 150 #150 #TODO: Change back after debugging!
 lower_crosswalk_r1 = 3*NUM_ROWS//4 
 lower_crosswalk_r2 = NUM_ROWS
 lower_crosswalk_c1 = NUM_COLUMNS//4
 lower_crosswalk_c2 = 3*NUM_COLUMNS//4
+
+inner_car_r1 = 340
+inner_car_r2 = 720
+inner_car_c1 = 700
+inner_car_c2 = 1280
+
 
 class controller():
     def __init__(self):
@@ -43,6 +51,7 @@ class controller():
         rospy.init_node('controller', anonymous=True)
         self._image_sub = rospy.Subscriber('/R1/pi_camera/image_raw', Image, callback=self._image_callback, queue_size=1)
         self._clock_sub = rospy.Subscriber('/clock', Time, callback=self._time_callback, queue_size=1)
+        self._plate_sub = rospy.Subscriber('/plate_msg', String, callback=self._on_plate, queue_size=10)
         
         self._twist_pub = rospy.Publisher('/R1/cmd_vel', Twist, queue_size=1)
         self._image_pub = rospy.Publisher('/R1/debug_image', Image, queue_size=1)
@@ -51,18 +60,40 @@ class controller():
         self._bridge = CvBridge()
         self.image_count = 0
         self.state = States.STOP
+        self.previous_state = States.STOP
+
         self.seconds = 0
         self.time_since_crossing_started = 0
         self.past_error = 0
         self.past_saw_left = False
-        self.left_following = True
+        self.is_done_outside = False
+
+        self.start_time = None
+
+        self.detected_plates = []
         rospy.Timer(rospy.Duration(1), self._on_timer)
+
+    def _on_plate(self, plate_string):
+        self.detected_plates.append(plate_string)
 
     def _on_timer(self, time):
         if not self.initialized:
             return
 
         self.seconds += 1
+
+
+        time_r = rospy.get_time()
+        time_from_start = time_r
+        if time_r != 0:
+            if not self.start_time:
+                self.start_time = time_r
+            time_from_start = time_r - self.start_time
+            print(time_from_start)
+        
+        if TO_INNER_TIMEOUT < time_from_start:
+            #TODO: detect if enough plates have been detected
+            self.is_done_outside = True
         
         if self.seconds == 1:
             self.start_timer()
@@ -82,7 +113,13 @@ class controller():
             self.time_since_crossing_started += 1
             
             if self.time_since_crossing_started > CROSSING_TIME:
-                self.state = States.FOLLOWING
+                if self.is_done_outside:
+                    self.state = States.TO_INNER
+                else:
+                    self.state = States.FOLLOWING
+
+        if self.is_done_outside and self.state == States.FOLLOWING:
+            self.state = States.TO_INNER
                 
 
         print(self.state)
@@ -102,7 +139,7 @@ class controller():
         if not self.initialized:
             return
         
-        print(rospy.get_time())
+        #print(rospy.get_time())
         try:
             cv_image = self._bridge.imgmsg_to_cv2(image, "bgr8")
         except CvBridgeError as e:
@@ -113,52 +150,72 @@ class controller():
 
         # print('shape:')
         # print(cv_image.shape) --> 720, 1080, 3
-        
-        if self.state == States.FOLLOWING or self.state == States.STARTING or self.state == States.CROSSING:
-            LEFT_FOLLOWING = self.left_following
-            print(self.left_following)
 
+
+        if self.state == States.FOLLOWING or self.state == States.STARTING or self.state == States.CROSSING or self.state == States.TO_INNER or self.state == States.INNER_DRIVE:
             row_max, col_max, channels = cv_image.shape
             hsv_frame = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
 
+            # ROAD
             road_mask = cv2.inRange(hsv_frame, (0,0,80), (10,10,90))
             road_mask_mid = road_mask[:, 1*(col_max//3):2*(col_max//3)]
 
-            line_mask = cv2.inRange(hsv_frame, (0,0,248), (2,2,255))
-            cross_walk_red_mask = cv2.inRange(hsv_frame, (0,250,250), (2,255,255))
-            car_mask = cv2.inRange(hsv_frame, (116,125, 197),(124,133,203))  + cv2.inRange(hsv_frame, (115,245,95),(125,260,105))# (197,125, 116),(203,133,124))
-            truck_mask = cv2.inRange(hsv_frame, (0,0,12),(1,1,20)) #(45,0,0),(220,1,1))
+            #ROAD LINES
+            line_col_start = 1*(col_max//3)
+            line_row_start = -1*(row_max//4)
+            
+            line_mask = cv2.inRange(hsv_frame[line_row_start:,:], (0,0,248), (2,2,255))
+            
+            cropped_line_mask_right = line_mask[:, line_col_start:]
+            cropped_line_mask_left = line_mask[:, :-line_col_start]
+            
+            #CROSSWALK
+            cross_walk_red_mask = cv2.inRange(hsv_frame[lower_crosswalk_r1:lower_crosswalk_r2,lower_crosswalk_c1:lower_crosswalk_c2], (0,250,250), (2,255,255))
 
-#            out_frame = hsv_frame
-            out_frame = car_mask//2 + truck_mask
-            out_frame = cv2.cvtColor(out_frame, cv2.COLOR_GRAY2BGR)
+            lower_red_mask = cross_walk_red_mask
+            
+            #CAR DETECTION
+            if self.state == States.TO_INNER or self.state == States.INNER_DRIVE:
+                car_mask = cv2.inRange(hsv_frame, (116,125, 197),(124,133,203)) + cv2.inRange(hsv_frame, (115,245,95),(125,260,105)) # (197,125, 116),(203,133,124))
+                transition_car_mask = car_mask[inner_car_r1:inner_car_r2, inner_car_c1:inner_car_c2]
+                width = 200
+                car_ML = np.sum(car_mask[435:550,640-width:640]) / (255.0 * width * 115) 
+                car_MR = np.sum(car_mask[435:550,640:640+width]) / (255.0 * width * 115) 
+                car_SL = np.sum(car_mask[560:,:280]) / (255.0 * 160 * 280)
+                car_SR = np.sum(car_mask[560:,-280:]) / (255.0 * 160 * 280)
+            
+            #TRUCK DETECTION (Tires)
+            if self.state == States.TO_INNER or self.state == States.INNER_DRIVE:
+                truck_mask = cv2.inRange(hsv_frame, (0,0,12),(1,1,20)) #(45,0,0),(220,1,1))
 
-            truckness = np.sum(truck_mask)
-            cv2.putText(out_frame, str(np.sum(car_mask[340:,700:])), (300,300), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,0,0),2,cv2.LINE_AA)
+            #SET OUT FRAME
+            #out_frame = hsv_frame
+            #out_frame = car_mask//2 + truck_mask
+            #out_frame = cv2.cvtColor(out_frame, cv2.COLOR_GRAY2BGR)
 
-            PASSING_INNER_CAR = False
-            #if 
+            # truckness = np.sum(truck_mask)
+            # cv2.putText(out_frame, str(np.sum(car_mask[340:,700:])), (300,300), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,0,0),2,cv2.LINE_AA)
+
+            LEFT_FOLLOWING = False
+            if self.state == States.TO_INNER:
+                LEFT_FOLLOWING = True
 
             USE_CENTER = False
             if np.sum(road_mask_mid[500:]) > 0.7*255*(row_max-500)*road_mask_mid.shape[1] and np.sum(road_mask_mid[360:500]) > 0.6*255*(500-360)*road_mask_mid.shape[1]:
                 USE_CENTER = True
-            
-            line_col_start = 1*(col_max//3)
-            line_row_start = -1*(row_max//4)
-            cropped_line_mask_right = line_mask[line_row_start:, line_col_start:]
-            cropped_line_mask_left = line_mask[line_row_start:, :-line_col_start]
 
             if USE_CENTER:
                 M_road = cv2.moments(road_mask_mid)
             else:
                 M_road = cv2.moments(road_mask)
-            M_line_R = cv2.moments(cropped_line_mask_right)
-            M_line_L = cv2.moments(cropped_line_mask_left)
 
-            alpha_line = 0.27 #0.2 for outer
-
-            lower_red_mask = cross_walk_red_mask[lower_crosswalk_r1:lower_crosswalk_r2,lower_crosswalk_c1:lower_crosswalk_c2]
-
+            if LEFT_FOLLOWING:
+                M_line_L = cv2.moments(cropped_line_mask_left)
+            else:
+                M_line_R = cv2.moments(cropped_line_mask_right)
+            
+            alpha_line = 0.27 
+            #0.2 for outer
             #out_frame = hsv_frame
 
             error = 0
@@ -171,22 +228,22 @@ class controller():
                 else:
                     error = cX - col_max / 2
 
-                if M_line_R["m00"] != 0 and self.state != States.STARTING and not LEFT_FOLLOWING:
+                if not LEFT_FOLLOWING and M_line_R["m00"] != 0 and self.state != States.STARTING:
                     cX = int(M_line_R["m10"] / M_line_R["m00"])
                     cY = int(M_line_R["m01"] / M_line_R["m00"])
 
                     error = (1 - alpha_line) * error + alpha_line * (cX - (4 * line_col_start) / 5)
 
-                if M_line_L["m00"] != 0 and self.state != States.STARTING and LEFT_FOLLOWING:
+                if LEFT_FOLLOWING and M_line_L["m00"] != 0 and self.state != States.STARTING:
                     cX = int(M_line_L["m10"] / M_line_L["m00"])
                     cY = int(M_line_L["m01"] / M_line_L["m00"])
-                    print(cX)
+                    #print(cX)
 
-                    error = (1 - alpha_line) * error + -1 * alpha_line * (cX - (1.5 * line_col_start) / 5)*1.3
+                    error = (1 - alpha_line) * error + -1 * alpha_line * (cX - (1.4 * line_col_start) / 5)*1.0
 
                     #out_frame = cv2.circle(out_frame, (cX,cY), 5,(255,0,0))
                     self.past_saw_left = True
-                elif M_line_L["m00"] == 0 and self.state != States.STARTING and LEFT_FOLLOWING:
+                elif LEFT_FOLLOWING and M_line_L["m00"] == 0 and self.state != States.STARTING:
                     if self.past_saw_left:
                         error = (1 - alpha_line) * error + -1 * alpha_line * (500 - (1.5 * line_col_start) / 5)
                         print("lost left")
@@ -197,22 +254,66 @@ class controller():
                             self.past_saw_left = False
                     else:
                         self.past_saw_left = False
+                
+                if self.state == States.TO_INNER or self.state == States.INNER_DRIVE:
+                    CAR_MID_THRESHOLD = 0.5
+                    CAR_MID_A = 0.1
+                    CAR_MID_P = 400
+                    CAR_SIDE_THRESHOLD = 0.1
+                    CAR_SIDE_SETPOINT = 0.5
+                    CAR_SIDE_A = 0.1
+                    CAR_SIDE_P = 200
+
+                    # if car_SL > car_SR:
+                    #     if car_SL > CAR_SIDE_THRESHOLD:
+                    #         error = (1 - CAR_SIDE_A) * error - CAR_SIDE_A * CAR_SIDE_P * (car_SL - CAR_MID_THRESHOLD) 
+                    # else:
+                    #     if car_SR > CAR_SIDE_THRESHOLD:
+                    #         error = (1 - CAR_SIDE_A) * error + CAR_SIDE_A * CAR_SIDE_P * (car_SR - CAR_MID_THRESHOLD) 
+                    
+                    if car_ML > car_MR:
+                        if car_ML > CAR_MID_THRESHOLD:
+                            error = (1 - CAR_MID_A) * error + CAR_MID_A * car_ML * CAR_MID_P
+
+                    else:
+                        if car_MR > CAR_MID_THRESHOLD:
+                            error = (1 - CAR_MID_A) * error - CAR_MID_A * car_MR * CAR_MID_P
+
 
             low_pass_K = 0.2
             error = (1-low_pass_K) * error + low_pass_K * self.past_error
-            move_cmd.linear.x = 0.1 - error * 0.0001
-            move_cmd.angular.z = -1 * error * 0.01 if self.state != States.STARTING else -1 * error * 0.01 + 0.1
+
+            linear_cmd = 0.14 - error * 0.0001
+            angular_cmd = -1 * error * 0.01
+            print("error")
+            print(error)
+            # print("linear")
+            # print(linear_cmd)
+            # print("angular")
+            # print(angular_cmd)
+            if self.state == States.STARTING:
+                angular_cmd += 0.1
+            elif self.state == States.INNER_DRIVE:
+                angular_cmd -= 0.3
+            move_cmd.linear.x = linear_cmd if self.previous_state != States.CROSSWALK_WATCH else linear_cmd*0.25
+            move_cmd.angular.z = angular_cmd
 
             self.past_error = error
 
-            if np.sum(car_mask[340:,700:]) > 0.8*255*(1280-790)*(100):
-                self.left_following = False
-            if np.sum(truck_mask) > 200000:
+            # SEEING MIDDLE CAR 
+            # TODO: fix, only some entrances have car immediately...
+            if self.state == States.TO_INNER and np.sum(transition_car_mask) > 0.5*255*(1280-790)*(100):
+                self.state = States.INNER_DRIVE
+
+            #EMERGENCY STOPPING
+            if (self.state == States.TO_INNER or self.state == States.INNER_DRIVE) and np.sum(truck_mask) > 200000:
                 move_cmd = Twist()
 
             if np.sum(lower_red_mask) > lower_red_mask.shape[0] * lower_red_mask.shape[1] * 255//4 and self.state != States.CROSSING:
                 move_cmd = Twist()
                 self.state = States.CROSSWALK_WATCH
+
+                #TODO: Worry about switching back to going to inner if we pass crosswalk
 
             # if np.sum(cropped_line_mask[200:, 2*1080//5:3*1080//5]) >= 0.5*200*1080//5*255:
             #     #self.state = States.STOP
@@ -252,6 +353,7 @@ class controller():
         else:
             raise Exception('Invalid State')
 
+        self.previous_state = self.state
         self._twist_pub.publish(move_cmd)
         self._image_pub.publish(self._bridge.cv2_to_imgmsg(out_frame, "bgr8"))
         self.image_count += 1
