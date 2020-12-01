@@ -32,7 +32,8 @@ START_UP_WAIT_TIME = 8 # 8 #TODO: Change back after debugging!
 NUM_ROWS = 720
 NUM_COLUMNS = 1080
 CROSSING_TIME = 10 
-TO_INNER_TIMEOUT = 150 #150 #TODO: Change back after debugging!
+CROSS_DELAY = 2
+TO_INNER_TIMEOUT = 120 #120 #TODO: Change back after debugging!
 lower_crosswalk_r1 = 3*NUM_ROWS//4 
 lower_crosswalk_r2 = NUM_ROWS
 lower_crosswalk_c1 = NUM_COLUMNS//4
@@ -285,12 +286,7 @@ class controller():
 
             linear_cmd = 0.14 - error * 0.0001
             angular_cmd = -1 * error * 0.01
-            print("error")
-            print(error)
-            # print("linear")
-            # print(linear_cmd)
-            # print("angular")
-            # print(angular_cmd)
+
             if self.state == States.STARTING:
                 angular_cmd += 0.1
             elif self.state == States.INNER_DRIVE:
@@ -309,10 +305,13 @@ class controller():
             if (self.state == States.TO_INNER or self.state == States.INNER_DRIVE) and np.sum(truck_mask) > 200000:
                 move_cmd = Twist()
 
-            if np.sum(lower_red_mask) > lower_red_mask.shape[0] * lower_red_mask.shape[1] * 255//4 and self.state != States.CROSSING:
+            if np.sum(lower_red_mask) > lower_red_mask.shape[0] * lower_red_mask.shape[1] * 255//5 and self.state != States.CROSSING:
                 move_cmd = Twist()
                 self.state = States.CROSSWALK_WATCH
+                print("Crosswalk detected")
 
+            if self.state == States.CROSSING and self.time_since_crossing_started <= CROSS_DELAY:
+                move_cmd = Twist()
                 #TODO: Worry about switching back to going to inner if we pass crosswalk
 
             # if np.sum(cropped_line_mask[200:, 2*1080//5:3*1080//5]) >= 0.5*200*1080//5*255:
@@ -335,14 +334,14 @@ class controller():
 
                 if np.sum(purple_mask) > 255 * 3 * 17:
                     self.state = States.CROSSING
+                    self.time_since_crossing_started = 0
 
                 #out_frame = cv2.cvtColor(purple_mask, cv2.COLOR_GRAY2BGR)
                 #cY = int(M_white["m01"] / M_white["m00"])
             else:
                 self.state == States.CROSSING
-
-            if self.state == States.CROSSING:
                 self.time_since_crossing_started = 0
+                
                 
             move_cmd = Twist()
             
