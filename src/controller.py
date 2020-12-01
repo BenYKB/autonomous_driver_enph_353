@@ -10,7 +10,6 @@ from sensor_msgs.msg import Image
 #import random
 from std_msgs.msg import Time
 from std_msgs.msg import String
-from std_msgs.msg import Time
 import rospy
 from geometry_msgs.msg import Twist
 from cv_bridge import CvBridge, CvBridgeError
@@ -28,12 +27,12 @@ class States(Enum):
     TO_INNER = 7
     INNER_DRIVE = 8
 
-START_UP_WAIT_TIME = 8 # 8 #TODO: Change back after debugging!
+START_UP_WAIT_TIME = 7 # 8 #TODO: Change back after debugging!
 NUM_ROWS = 720
 NUM_COLUMNS = 1080
-CROSSING_TIME = 10 
+CROSSING_TIME = 10
 CROSS_DELAY = 2
-TO_INNER_TIMEOUT = 120 #120 #TODO: Change back after debugging!
+TO_INNER_TIMEOUT = 86 #86 #TODO: Change back after debugging!
 lower_crosswalk_r1 = 3*NUM_ROWS//4 
 lower_crosswalk_r2 = NUM_ROWS
 lower_crosswalk_c1 = NUM_COLUMNS//4
@@ -52,11 +51,12 @@ class controller():
         rospy.init_node('controller', anonymous=True)
         self._image_sub = rospy.Subscriber('/R1/pi_camera/image_raw', Image, callback=self._image_callback, queue_size=1)
         self._clock_sub = rospy.Subscriber('/clock', Time, callback=self._time_callback, queue_size=1)
-        self._plate_sub = rospy.Subscriber('/plate_msg', String, callback=self._on_plate, queue_size=10)
+        self._internal_plate_sub = rospy.Subscriber('/internal_plate_msg', String, callback=self._on_plate, queue_size=10)
         
         self._twist_pub = rospy.Publisher('/R1/cmd_vel', Twist, queue_size=1)
         self._image_pub = rospy.Publisher('/R1/debug_image', Image, queue_size=1)
         self._licence_pub = rospy.Publisher('/license_plate', String, queue_size=1)  # note no slash in the source code
+        self._internal_plate_pub = rospy.Publisher('/internal_plate_msg', String, queue_size=10)
 
         self._bridge = CvBridge()
         self.image_count = 0
@@ -71,18 +71,68 @@ class controller():
 
         self.start_time = None
 
-        self.detected_plates = []
+        self.plates = {
+            1: ['A','A','0','0', -1.0],
+            2: ['A','A','0','0', -1.0],
+            3: ['A','A','0','0', -1.0],
+            4: ['A','A','0','0', -1.0],
+            5: ['A','A','0','0', -1.0],
+            6: ['A','A','0','0', -1.0],
+            7: ['A','A','0','0', -1.0],
+            8: ['A','A','0','0', -1.0],
+        }
+
         rospy.Timer(rospy.Duration(1), self._on_timer)
 
     def _on_plate(self, plate_string):
-        self.detected_plates.append(plate_string)
+        plate_string = plate_string.data
+        plate_list = plate_string.split(',')
+
+        if len(plate_list) != 6:
+            print("message invalid length:")
+            print(plate_string)
+
+        try:
+            P = int(plate_list[0])
+            C = float(plate_list[-1])
+        except ValueError:
+            print("message invalid types:")
+            print(plate_string)
+            return
+        
+        if not (0 < P < 9):
+            print("P out of range")
+            print(P)
+            return
+
+        plate_value =  plate_list[1:5]
+        plate_value.append(C)
+
+        current_C = self.plates[P][-1]
+
+        if C > current_C:
+            print("updated plate at")
+            print(P)
+            self.plates[P] = plate_value
+            
+            msg = 'team1,xxxx,'+str(P)+','+''.join(plate_value[0:4])
+            ros_msg = String(msg)
+            self._licence_pub.publish(ros_msg)
+            print("sending msg")
+            print(msg)
+            if P == 1:
+                self.is_done_outside = True
+
+            #TODO: Stop if got both inner plates
 
     def _on_timer(self, time):
         if not self.initialized:
             return
 
         self.seconds += 1
-
+        
+        #TODO: remove if not debugging
+        #self._internal_plate_pub.publish(String('5,A,A,2,2,0.9'))
 
         time_r = rospy.get_time()
         time_from_start = time_r
@@ -90,7 +140,7 @@ class controller():
             if not self.start_time:
                 self.start_time = time_r
             time_from_start = time_r - self.start_time
-            print(time_from_start)
+            #print(time_from_start)
         
         if TO_INNER_TIMEOUT < time_from_start:
             #TODO: detect if enough plates have been detected
@@ -100,9 +150,9 @@ class controller():
             self.start_timer()
             self.state = States.STARTING
         
-        # if self.seconds == 60*4-2:
-        #     self.stop_timer()
-        #     self.state = States.STOP
+        if self.seconds == 60*4-2:
+            self.stop_timer()
+            self.state = States.STOP
 
         # if self.seconds >= 20:
         #     self.state = States.STOP
@@ -146,7 +196,7 @@ class controller():
         except CvBridgeError as e:
             print(e)
             return
-        out_frame = cv_image
+        out_frame = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
         move_cmd = Twist()
 
         # print('shape:')
@@ -169,10 +219,10 @@ class controller():
             
             cropped_line_mask_right = line_mask[:, line_col_start:]
             cropped_line_mask_left = line_mask[:, :-line_col_start]
-            
+
             #CROSSWALK
             cross_walk_red_mask = cv2.inRange(hsv_frame[lower_crosswalk_r1:lower_crosswalk_r2,lower_crosswalk_c1:lower_crosswalk_c2], (0,250,250), (2,255,255))
-
+ 
             lower_red_mask = cross_walk_red_mask
             
             #CAR DETECTION
@@ -204,6 +254,8 @@ class controller():
             USE_CENTER = False
             if np.sum(road_mask_mid[500:]) > 0.7*255*(row_max-500)*road_mask_mid.shape[1] and np.sum(road_mask_mid[360:500]) > 0.6*255*(500-360)*road_mask_mid.shape[1]:
                 USE_CENTER = True
+            if self.state == States.INNER_DRIVE:
+                USE_CENTER = False
 
             if USE_CENTER:
                 M_road = cv2.moments(road_mask_mid)
@@ -247,7 +299,7 @@ class controller():
                 elif LEFT_FOLLOWING and M_line_L["m00"] == 0 and self.state != States.STARTING:
                     if self.past_saw_left:
                         error = (1 - alpha_line) * error + -1 * alpha_line * (500 - (1.5 * line_col_start) / 5)
-                        print("lost left")
+                        #print("lost left")
 
                         if np.sum(road_mask[-row_max//5:, :col_max//3]) > 255*0.5*row_max//5*col_max//3:
                             self.past_saw_left = True
@@ -297,7 +349,6 @@ class controller():
             self.past_error = error
 
             # SEEING MIDDLE CAR 
-            # TODO: fix, only some entrances have car immediately...
             if self.state == States.TO_INNER and np.sum(transition_car_mask) > 0.5*255*(1280-790)*(100):
                 self.state = States.INNER_DRIVE
 
@@ -308,11 +359,10 @@ class controller():
             if np.sum(lower_red_mask) > lower_red_mask.shape[0] * lower_red_mask.shape[1] * 255//5 and self.state != States.CROSSING:
                 move_cmd = Twist()
                 self.state = States.CROSSWALK_WATCH
-                print("Crosswalk detected")
+                #print("Crosswalk detected")
 
             if self.state == States.CROSSING and self.time_since_crossing_started <= CROSS_DELAY:
                 move_cmd = Twist()
-                #TODO: Worry about switching back to going to inner if we pass crosswalk
 
             # if np.sum(cropped_line_mask[200:, 2*1080//5:3*1080//5]) >= 0.5*200*1080//5*255:
             #     #self.state = States.STOP
