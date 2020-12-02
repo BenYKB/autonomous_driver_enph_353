@@ -110,14 +110,14 @@ class controller():
 
         current_C = self.plates[P][-1]
 
-        if C > current_C:
+        if C > current_C and self.seconds > 1:
             print("updated plate at")
             print(P)
             self.plates[P] = plate_value
             
             msg = 'team1,xxxx,'+str(P)+','+''.join(plate_value[0:4])
-            ros_msg = String(msg)
-            self._licence_pub.publish(ros_msg)
+            #ros_msg = String(msg)
+            self._licence_pub.publish(str(msg))
             print("sending msg")
             print(msg)
             if P == 1:
