@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import cv2
+import re
 #import csv
 import numpy as np
 from sensor_msgs.msg import Image
@@ -56,7 +57,7 @@ class license_plate_detection():
             return
 
         letters, confidence = parse_image(img)
-        if len(letters) == 6:
+        if letters is not None and confidence is not None and len(letters) == 6:
             location, plate =self._get_loc_plate(letters)
             if location is not None:
                 self._send_license_plate(location, plate, confidence)
@@ -70,7 +71,7 @@ class license_plate_detection():
             #letter = cv2.cvtColor(letter, cv2.COLOR_BGR2RGB)
             letter = letter*1./255
             img_aug = np.expand_dims(letter, axis=0)
-            print(img_aug.dtype)
+            #print(img_aug.dtype)
             #print(img_aug.shape)
             with self.graph.as_default():
                 tf.keras.backend.set_session(self.sess)
@@ -79,18 +80,25 @@ class license_plate_detection():
                 prediction = char_inverse_lookup[np.argmax(y_predict)]
                 output = output + prediction
                 #print(prediction)
-        print(output)
+        #print(output)
         if is_valid(output):
+            print('valid output loc plate')
             print(output)
+            #print(output)
             return output[1], output[2:]
         else:
             return None, None
 
 
     def _send_license_plate(self, loc, plate, confidence):
-        #output = ', '.join([loc[1], plate[0], plate[1], plate[2], plate[3], str(confidence)])
+        print("info")
+        print(loc)
+        print(plate)
+        print(confidence)
+        output = ','.join([loc, plate[0], plate[1], plate[2], plate[3], str(confidence)])
+        print("sending output" + str(output))
         #print('6,B,A,0,2,1000.2')
-        self._license_pub.publish(String('6,B,A,0,2,1000.2'))
+        self._license_pub.publish(String(output))
         #self._license_pub.publish(output)
 
 
@@ -192,7 +200,7 @@ def parse_image(img):
                 break
 
     if screenCnt1 is None:
-        return None
+        return None, None
     else:
         screenCnt1 = find_order_pts(screenCnt1)
         #cv2.imshow('edges', edged )
@@ -223,19 +231,24 @@ def parse_image(img):
                 letters.append(letter)
         except Exception as e:
             print(e)
-            return None
+            return None, None
 
         return letters, confidence
 
 def is_valid(string):
-    if not string[0]=='P':
-        return False
-    elif not string[2:4].isalpha():
-        return False
-    elif not string[1].isnumeric() or not string[4:].isnumeric():
-        return False
-    else:
-        return True
+    p = re.compile("^[P][0-9][A-Z][A-Z][0-9][0-9]$")
+
+    return True if p.match(string) else False
+
+    # #return True
+    # if not string[0]=='P':
+    #     return False
+    # elif not string[2:4].isalpha():
+    #     return False
+    # elif not string[1].isnumeric() or not string[4:].isnumeric():
+    #     return False
+    # else:
+    #     return True
 
 
 if __name__ == "__main__":

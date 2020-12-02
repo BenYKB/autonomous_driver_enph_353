@@ -110,6 +110,11 @@ class controller():
 
         current_C = self.plates[P][-1]
 
+        print("old confidence")
+        print(current_C)
+        print("new confidence")
+        print(C)
+
         if C > current_C and self.seconds > 1:
             print("updated plate at")
             print(P)
@@ -120,8 +125,8 @@ class controller():
             self._licence_pub.publish(str(msg))
             print("sending msg")
             print(msg)
-            if P == 1:
-                self.is_done_outside = True
+            # if P == 1:
+            #     self.is_done_outside = True
 
             #TODO: Stop if got both inner plates
 
@@ -140,7 +145,7 @@ class controller():
             if not self.start_time:
                 self.start_time = time_r
             time_from_start = time_r - self.start_time
-            #print(time_from_start)
+            print(time_from_start)
         
         if TO_INNER_TIMEOUT < time_from_start:
             #TODO: detect if enough plates have been detected
@@ -150,7 +155,7 @@ class controller():
             self.start_timer()
             self.state = States.STARTING
         
-        if self.seconds == 60*4-2:
+        if self.seconds >= 150:
             self.stop_timer()
             self.state = States.STOP
 
@@ -173,7 +178,7 @@ class controller():
             self.state = States.TO_INNER
                 
 
-        print(self.state)
+        #print(self.state)
 
     def _time_callback(self, time):
         if not self.initialized and rospy.get_time() > 1:
