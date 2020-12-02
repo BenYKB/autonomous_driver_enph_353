@@ -25,17 +25,8 @@ from tensorflow.python.keras.models import load_model
 
 import tensorflow as tf
 
-#sess = tf.Session()
-#graph = tf.get_default_graph()
 
-#set_session(sess)
-#model = load_model(os.path.dirname(os.path.abspath(__file__)) +'/model')
 
-#model._make_predict_function()
-#CNN.summary()
-
-team_id ='12345678'
-password = '12345678'
 
 alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 char_lookup = dict(zip([a for a in alphabet],[i for i in range(len(alphabet))]))
@@ -44,6 +35,13 @@ char_inverse_lookup = dict(map(reversed, char_lookup.items()))
 class license_plate_detection():
     def __init__(self):
         rospy.init_node('license_plate_detection', anonymous=True)
+
+        self.sess = tf.keras.backend.get_session()
+        self.graph = tf.compat.v1.get_default_graph()
+
+        self.model = load_model(os.path.dirname(os.path.abspath(__file__)) +'/model')
+        self.model._make_predict_function()
+        #self.model.summary()
 
         self._bridge = CvBridge()
         self._image_sub = rospy.Subscriber('/R1/pi_camera/image_raw', Image, callback=self._image_callback, queue_size=1)
@@ -58,35 +56,36 @@ class license_plate_detection():
             return
 
         letters, confidence = parse_image(img)
-        location, plate =self._get_loc_plate(letters)
-        if location is not None:
-            self._send_license_plate(location, plate, confidence)
+        if len(letters) == 6:
+            location, plate =self._get_loc_plate(letters)
+            if location is not None:
+                self._send_license_plate(location, plate, confidence)
 
 
     def _get_loc_plate(self, letters):
-        output = ''
-        model = load_model(os.path.dirname(os.path.abspath(__file__)) +'/model')
-        model._make_predict_function()
+        output= ''
         for letter in letters:
             #letter = cv2.imread('/home/fizzer/ros_ws/src/autonomous_driver_enph_353/src/test _images/plate_BF17.png', cv2.IMREAD_GRAYSCALE)[5:,:]
             #letter_reshape = letter.reshape(letter.shape[0], letter.shape[1], 1)
+            #letter = cv2.cvtColor(letter, cv2.COLOR_BGR2RGB)
+            letter = letter*1./255
             img_aug = np.expand_dims(letter, axis=0)
+            print(img_aug.dtype)
             #print(img_aug.shape)
-            y_predict = model.predict(img_aug)[0]
-            #y_predict = self.CNN.predict(letter)
-            prediction = char_inverse_lookup[np.argmax(y_predict)]
-            output = output + prediction
-            #print(prediction)
-                #if not cv2.imwrite('/home/fizzer/ros_ws/src/autonomous_driver_enph_353/src/test_images/' + prediction + '.png', letter):
-                    #raise Exception("Could not write image"
-                # confidence = something later if we encounter the same plate twice
+            with self.graph.as_default():
+                tf.keras.backend.set_session(self.sess)
+                y_predict = self.model.predict(img_aug)[0]
+                #y_predict = self.CNN.predict(letter)
+                prediction = char_inverse_lookup[np.argmax(y_predict)]
+                output = output + prediction
+                #print(prediction)
+        print(output)
         if is_valid(output):
             print(output)
             return output[1], output[2:]
         else:
-            #return None, None
-            print(output)
-            return output[1], output[2:]
+            return None, None
+
 
     def _send_license_plate(self, loc, plate, confidence):
         #output = ', '.join([loc[1], plate[0], plate[1], plate[2], plate[3], str(confidence)])
@@ -139,7 +138,6 @@ def parse_image(img):
     hsv_frame = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     #cv2.imshow('hsv', hsv_frame)
     shape = (1280, 720)
-    shape_3d = (1280, 720, 3)
 
     normal_lower_hsv = np.array([0,0,86])
     normal_upper_hsv = np.array([141,35,125])
@@ -164,6 +162,7 @@ def parse_image(img):
 
     #print(gray.shape)
     #cv2.imshow('mask', gray)
+
     edged = cv2.Canny(gray, 30, 200)
     #cv2.imshow('edges', edged )
 
