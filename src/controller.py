@@ -69,6 +69,8 @@ class controller():
         self.past_saw_left = False
         self.is_done_outside = False
 
+        self.unique_plates = 0
+
         self.start_time = None
 
         self.plates = {
@@ -116,6 +118,10 @@ class controller():
         print(C)
 
         if C > current_C and self.seconds > 1:
+            if current_C == -1.0:
+                self.unique_plates += 1
+
+
             print("updated plate at")
             print(P)
             self.plates[P] = plate_value
@@ -151,11 +157,14 @@ class controller():
             #TODO: detect if enough plates have been detected
             self.is_done_outside = True
         
+        if 75 < time_from_start and self.unique_plates >= 6:
+            self.is_done_outside = True
+        
         if self.seconds == 1:
             self.start_timer()
             self.state = States.STARTING
         
-        if self.seconds >= 150:
+        if self.seconds >= 140:
             self.stop_timer()
             self.state = States.STOP
 

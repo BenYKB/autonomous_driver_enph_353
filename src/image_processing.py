@@ -40,7 +40,7 @@ class license_plate_detection():
         self.sess = tf.keras.backend.get_session()
         self.graph = tf.compat.v1.get_default_graph()
 
-        self.model = load_model(os.path.dirname(os.path.abspath(__file__)) +'/model')
+        self.model = load_model(os.path.dirname(os.path.abspath(__file__)) +'/model2')
         self.model._make_predict_function()
         #self.model.summary()
 
@@ -205,6 +205,18 @@ def parse_image(img):
         screenCnt1 = find_order_pts(screenCnt1)
         #cv2.imshow('edges', edged )
         #cv2.imshow('mask', gray)
+
+        if 120 > screenCnt1[1,0]:
+            if 50 > screenCnt1[1,0]:
+                confidence = confidence * 0.6
+            else:
+                confidence = confidence * 0.7
+
+        if screenCnt1[2,0] > 1280-120:
+            if screenCnt1[2,0] > 1280-50:
+                confidence = confidence * 0.6
+            else:
+                confidence = confidence * 0.7
 
         detected = deskew(img, screenCnt1, [[0,0],[0,1800],[600,1800],[600,0]], (600,1800))
 
