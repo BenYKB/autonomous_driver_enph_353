@@ -208,13 +208,13 @@ def parse_image(img):
 
         if 120 > screenCnt1[1,0]:
             if 50 > screenCnt1[1,0]:
-                confidence = confidence * 0.6
+                confidence = confidence * 0.5
             else:
                 confidence = confidence * 0.7
 
         if screenCnt1[2,0] > 1280-120:
             if screenCnt1[2,0] > 1280-50:
-                confidence = confidence * 0.6
+                confidence = confidence * 0.5
             else:
                 confidence = confidence * 0.7
 

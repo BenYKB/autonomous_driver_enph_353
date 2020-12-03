@@ -126,7 +126,7 @@ class controller():
             print(P)
             self.plates[P] = plate_value
             
-            msg = 'team1,xxxx,'+str(P)+','+''.join(plate_value[0:4])
+            msg = 'Clutch_O_Clock,xxxx,'+str(P)+','+''.join(plate_value[0:4])
             #ros_msg = String(msg)
             self._licence_pub.publish(str(msg))
             print("sending msg")
@@ -194,10 +194,10 @@ class controller():
             self.initialized = True
 
     def start_timer(self):
-        self._licence_pub.publish(str('team1,xxxx,0,AA00'))
+        self._licence_pub.publish(str('Clutch_O_Clock,xxxx,0,AA00'))
     
     def stop_timer(self):
-        self._licence_pub.publish(str('team1,xxxx,-1,AA00'))
+        self._licence_pub.publish(str('Clutch_O_Clock,xxxx,-1,AA00'))
 
 
     def _image_callback(self, image):
