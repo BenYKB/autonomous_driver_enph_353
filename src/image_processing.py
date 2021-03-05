@@ -2,7 +2,6 @@
 
 import cv2
 import re
-#import csv
 import numpy as np
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
